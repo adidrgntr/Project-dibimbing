@@ -1,0 +1,298 @@
+---
+title: "Project dibimbing"
+author: "dandi dirgantara"
+date: "9/28/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Library
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(patchwork)
+```
+# Data Description
+Feature Name	                                                Description
+person_age	                                                  Age
+person_income	                                                Annual Income
+personhomeownership	                                          Home ownership
+personemp                                                     length	Employment length (in years)
+loan_intent	                                                  Loan intent
+loan_grade	                                                  Loan grade
+loan_amnt	                                                    Loan amount
+loanintrate	                                                  Interest rate
+loan_status	                                                  Loan status (0 is non default 1 is default)
+loanpercentincome	                                            Percent income
+cbpersondefaultonfile	                                        Historical default
+cbpresoncredhistlength	                                      Credit history length
+
+
+#Load Data
+```{r}
+df <- read.csv("G:\\My Drive\\dibimbing\\credit_risk_dataset.csv")
+df
+```
+
+#Initial EDA
+```{r}
+str(df)
+```
+
+```{r}
+summary(df)
+```
+- N/A value in  loan_int_rate, person_emp_length
+- max age = 144 (weird)
+- max emp_length = 123 (weird)
+
+```{r}
+df %>% 
+  group_by(loan_status) %>% 
+  summarise(count=n())
+```
+```{r}
+#default rate is quite high 
+(7108/32581) * 100
+```
+
+
+#Data Preparation
+```{r}
+df %>% is.na() %>% colSums()
+```
+
+```{r}
+df %>% 
+  filter(is.na(person_emp_length))
+```
+
+```{r}
+df %>% 
+  filter(is.na(loan_int_rate))
+```
+
+- we can drop na value from column int_rate (since it's not make sense there's people who apply loan with no loan interest) 
+- we can drop na value from emp_length (since there's income data but no emp_length which not make sense)
+
+```{r fig.width=10, fig.height=5}
+df %>% 
+  ggplot(aes(x=person_age, y=person_emp_length))+
+  geom_point()+
+  labs(title = "Age vs Employee Length") +
+  scale_x_continuous(breaks = seq(20, 150, 25), 
+                     limits = c(20,150))
+```
+- there's outliers from emp_length (young people but the emp_length >= 100 year)
+- also with the age column (old people but with low emp_length)
+
+```{r}
+df %>% 
+  filter (person_emp_length == 123)
+```
+
+```{r fig.width=10, fig.height=5}
+df %>% 
+  ggplot(aes(x=person_emp_length, y= person_age))+
+  geom_point()+
+  labs(title = "Age vs Employee Length") +
+  scale_y_continuous(breaks = seq(20, 150, 25),
+                     limits = c(20,150))
+```
+```{r}
+df %>% 
+  filter (person_age >= 90)
+```
+
+- so based on checking above we can drop these condition below:
+  1. employ_length NA and >= 100
+  2. person_age NA and juga >= 90
+  
+```{r}
+df_clean <- df %>% 
+  filter(!is.na(person_emp_length)) %>%
+  filter(!is.na(loan_int_rate)) %>%
+  filter(person_age < 90) %>%
+  filter(person_emp_length < 100) %>% 
+  filter(person_income < 2039784)
+
+summary(df_clean)
+```
+```{r}
+df_clean <- df_clean %>% relocate (loan_status, .after = cb_person_cred_hist_length)
+```
+
+```{r}
+df_clean %>% 
+  filter(person_income >= 1000000)
+```
+```{r}
+df_clean %>% 
+  ggplot(aes(x=person_income)) +
+  geom_boxplot() +
+  scale_x_continuous(label = scales::label_number(suffix = ' M', scale = 1e-6)) 
+```
+
+
+#EDA
+```{r fig.width=30}
+# library(psych)
+pairs.panels(df_clean, 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = TRUE # show correlation ellipses
+) 
+```
+- from pair plot above we can take a quick overview for each column 
+- feature that have high correlation is person_age & cbpresoncredhistlength also loan_grade & loan_int_rate (so later we can keep only one feature for our model)
+- on this anaylisis i will take a look on several column only
+- the consideration is 
+  1. column with strong correlation with loan_status
+  2. column that might be impactful for credit scoring (historical data)
+  3. personal info that represent the behavior for this client
+```{r fig.width=10}
+df_clean %>%
+  ggplot(aes(x=person_age))+
+  geom_bar() +
+  labs(title = "Person Age Distribution") +
+  scale_x_continuous(breaks = seq(20, 90, 5),
+                     limits = c(20,90))
+```
+- from that plot we know mostly our client is a young people since we have high number in age range 20 -30
+
+```{r fig.width= 10 ,fig.height= 7}
+df_clean %>% 
+  ggplot(aes(x = person_age , y = person_income)) +
+  geom_point(aes(color = factor(loan_status))) +
+  labs(title = "Age vs Income by loan status",
+       color = "Loan Status") +
+  scale_x_continuous(breaks = seq(20, 90, 5),
+                     limits = c(20,90)) +
+  scale_y_continuous(label = scales::label_number(suffix = ' M', scale = 1e-6)) 
+```
+- from this plot we know that mostly people with higher income are rarely hit default rate
+- and small notes that people with higher income mostly in young people
+
+```{r fig.width= 10 ,fig.height= 7}
+df_clean %>% 
+  ggplot(aes(x = person_emp_length , y = person_income)) +
+  geom_point(aes(color = factor(loan_status))) +
+  labs(title = "Employment vs Income by loan status",
+       color = "Loan Status") +
+  # scale_x_continuous(breaks = seq(20, 90, 5),
+                     # limits = c(20,90)) +
+  scale_y_continuous(label = scales::label_number(suffix = ' M', scale = 1e-6)) 
+```
+- income and employment length not having clear linear relation meaning people with long employment lenght doesn't mean the income will be high as well
+
+
+```{r fig.width= 10}
+df_clean %>% 
+  ggplot(aes(x=person_income, y=factor(loan_intent))) +
+  geom_boxplot() +
+  labs(title = "Income vs Loan Intention") +
+  scale_x_continuous(breaks = seq(0, 2500000, 250000),
+                     limits = c(0,2500000),
+                     label = scales::label_number(suffix = ' M', scale = 1e-6)) 
+```
+- people with higher income are more likely apply the loan for home improvement purpose
+
+```{r fig.width= 10}
+df_clean %>% 
+  ggplot(aes(x=person_age, y=factor(loan_intent))) +
+  geom_boxplot() +
+  labs(title = "Age vs Loan Intention") +
+  scale_x_continuous(breaks = seq(20, 90, 5),
+                     limits = c(20,90))
+```
+- highest average age is on home improvement loan intention (meaning people with age range in 28 mostly apply loan for home improvement)
+
+
+```{r fig.width=12}
+df_clean %>% 
+  ggplot(aes(x=person_age, y=person_income)) +
+  geom_point(aes(color = factor(loan_intent))) +
+  labs(title = "Age vs Income by loan intention",
+       color = "Loan Intention") +
+  scale_x_continuous(breaks = seq(20, 90, 5),
+                     limits = c(20,90)) +
+  scale_y_continuous(breaks = seq(0, 2500000, 250000),
+                     limits = c(0,2000000),
+                     label = scales::label_number(suffix = ' M', scale = 1e-6)) +
+  scale_colour_brewer(palette = 'Set3')
+```
+- the distribution for age data is right skewed, showing this dataset is populated by young people
+- also with the income is skewed as well, showing that the distribution is not well balanced
+
+```{r fig.width=12}
+df_clean %>% 
+  ggplot(aes(x=person_age, y=person_income)) +
+  geom_point(aes(color = factor(person_home_ownership))) +
+  labs(title = "Age vs Income by home ownership",
+       color = "Loan Intention") +
+  scale_x_continuous(breaks = seq(20, 90, 5),
+                     limits = c(20,90)) +
+  scale_y_continuous(label = scales::label_number(suffix = ' M', scale = 1e-6)) +
+  scale_colour_brewer(palette = 'Set3')
+```
+- people with the mortgage home ownership seems have a higher income
+
+```{r fig.width=10}
+df_clean %>% 
+  ggplot(aes(x=loan_int_rate, y=loan_intent )) +
+  geom_boxplot() +
+  labs(title = "Loan Intention vs Interest Rate",
+       x = "Interest Rate",
+       y = "Loan Intention")
+```
+- from this plot we know that loan for home improvement is the most high compare to the others
+
+
+```{r fig.width= 10}
+df_clean %>% 
+  mutate(coun = n()) %>% 
+  ggplot(aes(fill=cb_person_default_on_file, y=coun, x=loan_intent)) + 
+  geom_bar(position="fill", stat="identity") +
+  labs(title = "Historical default vs Loan Intention")
+```
+- we know the highest default is on home improvement loan purpose based on this plot
+
+```{r}
+df_clean %>% 
+  ggplot(aes(x = loan_int_rate, y = factor(loan_status)))+
+  geom_boxplot() +
+  labs(title = "Loan Status vs Interest Rate",
+       x = "Interest Rate",
+       y = "Loan Status")
+```
+
+```{r}
+df_clean %>% 
+  ggplot(aes(x = person_income, y = factor(loan_status)))+
+  geom_boxplot() +
+  labs(title = "Loan Status vs Income",
+       x = "Income",
+       y = "Loan Status") +
+  scale_x_continuous(label = scales::label_number(suffix = ' M', scale = 1e-6))
+```
+
+```{r}
+df_clean %>% 
+  ggplot(aes(x = loan_amnt, y = factor(loan_status)))+
+  geom_boxplot() +
+  labs(title = "Loan Status vs Loan Amount",
+       x = "Loan Amount",
+       y = "Loan Status") +
+  scale_x_continuous(label = scales::label_number(suffix = ' K', scale = 1e-3))
+```
+
+- from 3 tables above we found some insight correlation between these variables
+- higher interest rate is most likely will get the default loan
+- a lower income also is most likely will get default
+- also the higher loan amount most likely will get default
+- so based on that 3 insight we can take new insight that higher interest rates, a lower income and higher loan amount increase the possibility to have a default.
